@@ -37,6 +37,7 @@ from .util import lookup_and_import
 from .StateMachine import Context, ErrorEvent
 from .Threading import Communicator, Workers
 from .worker import Worker
+from .webserver import Webserver
 
 # Globally install gettext for I18N
 gettext.install('photobooth', 'photobooth/locale')
@@ -83,12 +84,17 @@ class GuiProcess(mp.Process):
         self._comm = comm
 
     def run(self):
+        retval = None
+        parsed_args, unparsed_args = parseArgs(self._argv)
+        if parsed_args.gui:
+            logging.debug('Start GuiProcess')
+            Gui = lookup_and_import(gui.modules, self._cfg.get('Gui', 'module'),
+                                    'gui')
+            retval = Gui(self._argv, self._cfg, self._comm).run()
+        else:
+            logging.debug("Gui process disabled.")
 
-        logging.debug('GuiProcess: Initializing...')
-        Gui = lookup_and_import(gui.modules, self._cfg.get('Gui', 'module'),
-                                'gui')
-        logging.debug('GuiProcess: Running...')
-        retval = Gui(self._argv, self._cfg, self._comm).run()
+
         logging.debug('GuiProcess: Exit')
         return retval
 
@@ -143,6 +149,31 @@ class GpioProcess(mp.Process):
                 self._comm.send(Workers.MASTER, ErrorEvent('Gpio', str(e)))
 
         logging.debug('GpioProcess: Exit')
+        
+class WebServerProcess(mp.Process):
+    def __init__(self, argv, config, comm):
+        logging.debug(argv)
+        logging.debug(config)
+        logging.debug(comm)
+
+        super().__init__()
+        self._argv = argv
+        self.daemon = True
+        self._cfg = config
+        self._comm = comm
+
+    def run(self):
+        logging.debug("Start Webserver")
+        parsed_args, unparsed_args = parseArgs(self._argv)
+
+        if parsed_args.webserver:
+            logging.debug("Run webserver")
+            ws = Webserver(self._cfg, self._comm).run()
+        else:
+            logging.debug("Webserver disabled")
+
+
+
 
 
 def parseArgs(argv):
@@ -153,6 +184,8 @@ def parseArgs(argv):
                         help='omit welcome screen and run photobooth')
     parser.add_argument('--debug', action='store_true',
                         help='enable additional debug output')
+    parser.add_argument('--webserver', '-w', action='store_true', help='start the webserver')
+    parser.add_argument('--gui', '-g', action='store_true', help='start gui')
     return parser.parse_known_args()
 
 
@@ -185,7 +218,8 @@ def run(argv, is_run):
     # 3. GUI
     # 4. Postprocessing worker
     # 5. GPIO handler
-    proc_classes = (CameraProcess, WorkerProcess, GuiProcess, GpioProcess)
+    proc_classes = (CameraProcess, WorkerProcess, GuiProcess, GpioProcess, WebServerProcess)
+    #proc_classes = (CameraProcess, WorkerProcess, WebServerProcess)
     procs = [P(argv, config, comm) for P in proc_classes]
 
     for proc in procs:
